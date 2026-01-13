@@ -194,4 +194,4 @@ Government demo tools
 
 📜 License
 
-Free to use for learning, research, and educational purposes.
+MIT License
