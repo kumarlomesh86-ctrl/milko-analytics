@@ -78,6 +78,33 @@ def disease_decision(symptom):
     )
 
 # -------------------------------
+# Fodder Recommendation Logic
+# -------------------------------
+def fodder_recommendation(goal):
+    if goal == "milk":
+        return (
+            "🥛 <b>Milk Increase Fodder Plan:</b><ul>"
+            "<li>Green Fodder 55%</li>"
+            "<li>Maize / Barley 20%</li>"
+            "<li>Concentrate 20%</li>"
+            "<li>Mineral Mix 5%</li>"
+            "</ul>"
+        )
+
+    if goal == "fat":
+        return (
+            "🧈 <b>Fat Increase Fodder Plan:</b><ul>"
+            "<li>Green Fodder 40%</li>"
+            "<li>Oil Cake / Cotton Seed 25%</li>"
+            "<li>Dry Fodder 25%</li>"
+            "<li>Mineral Mix 10%</li>"
+            "</ul>"
+        )
+
+    return ""
+
+
+# -------------------------------
 # Chatbot Core
 # -------------------------------
 def dairy_chatbot(message, profile):
@@ -87,6 +114,14 @@ def dairy_chatbot(message, profile):
     budget = profile.get("budget")
     milk = profile.get("milkHistory")
     intent = profile.get("intent")
+
+        # ---- Milk Rate Variables ----
+    profile.setdefault("milk_rate_step", None)
+    profile.setdefault("fat", None)
+    profile.setdefault("fat_rate", None)
+    profile.setdefault("snf", None)
+    profile.setdefault("snf_rate", None)
+
 
     # ---- Reset option ----
     if "reset" in text:
@@ -192,7 +227,17 @@ def dairy_chatbot(message, profile):
             "<li>Concentrate 15%</li>"
             "<li>Mineral mix</li>"
             "</ul>"
+            "💡 To increase milk type <b>milk raise</b><br>"
+            "💡 To increase fat type <b>fat raise</b>"
         )
+
+    # ---- Fodder Goal Specific ----
+    if re.search(r"\bmilk\s+raise\b", text):
+        return fodder_recommendation("milk")
+    
+    if re.search(r"\bfat\s+raise\b", text):
+        return fodder_recommendation("fat")
+
 
     # ---- Shed ----
     if "shed" in text:
@@ -215,6 +260,49 @@ def dairy_chatbot(message, profile):
             "💡 Would you like to know about the process and documents required for animal loan? Comment 'Yes'"
         )
 
+    # ---- Milk Rate Calculation Flow ----
+    if "milk rate" in text or "milk price" in text:
+        profile["milk_rate_step"] = "fat"
+        return "🥛 Please tell FAT (%)"
+
+    if profile["milk_rate_step"] == "fat" and numbers:
+        profile["fat"] = numbers[0]
+        profile["milk_rate_step"] = "fat_rate"
+        return "💰 Please tell FAT rate"
+
+    if profile["milk_rate_step"] == "fat_rate" and numbers:
+        profile["fat_rate"] = numbers[0]
+        profile["milk_rate_step"] = "snf"
+        return "📊 Please tell SNF (%)"
+
+    if profile["milk_rate_step"] == "snf" and numbers:
+        profile["snf"] = numbers[0]
+        profile["milk_rate_step"] = "snf_rate"
+        return "💰 Please tell SNF rate"
+
+    if profile["milk_rate_step"] == "snf_rate" and numbers:
+        profile["snf_rate"] = numbers[0]
+        profile["milk_rate_step"] = "quantity"
+        return "📦 Please tell milk quantity (L)"
+
+    if profile["milk_rate_step"] == "quantity" and numbers:
+        quantity = numbers[0]
+
+        rate_per_liter = (
+            profile["fat"] * profile["fat_rate"]
+            + profile["snf"] * profile["snf_rate"]
+        )
+        total_amount = rate_per_liter * quantity
+
+        profile["milk_rate_step"] = None
+
+        return (
+            f"🥛 <b>Milk Rate Calculation:</b><br>"
+            f"Rate per Liter: ₹{rate_per_liter:.2f}<br>"
+            f"Total Milk Value: ₹{total_amount:.2f}"
+        )
+
+    
     # ---- Disease ----
     disease_keywords = ["disease","fever","sick","mouth","foot","milk","udder","low milk","diarrhea","loose"]
     if any(k in text for k in disease_keywords):
@@ -225,6 +313,7 @@ def dairy_chatbot(message, profile):
         "<b>I can help with:</b><ul>"
         "<li>Cow price / buffalo price</li>"
         "<li>Buy cow / buffalo suggestion</li>"
+        "<li>Milk Rate Calculation</li>"
         "<li>Fodder</li>"
         "<li>Disease symptoms</li>"
         "<li>Shed</li>"
@@ -270,7 +359,7 @@ button{background:#16a34a;color:white;border:none;border-radius:6px}
 <div class="container">
 <h2>🐄 Dairy Farm Guide Chatbot</h2>
 <div id="chat" class="chat">
-<div class="bot">Welcome! I am your dairy farm guide. I can help with prices, breed recommendation, fodder, milk, shed, disease symptoms, and loans. (Comment like: buy cow, buy buffalo, cow price, fodder, disease, shed, loan)</div>
+<div class="bot">Welcome! I am your dairy farm guide. I can help with prices, breed recommendation, fodder, milk, milk rate calculation, shed, disease symptoms, and loans. (Comment like: buy cow, buy buffalo, cow price, fodder, disease, shed, loan)</div>
 </div>
 <input id="msg" placeholder="Type here...">
 <button onclick="send()">Send</button>
