@@ -1,6 +1,6 @@
 from flask import Flask, request, jsonify, render_template_string
 import re
-
+from datetime import date
 app = Flask(__name__)
 
 # -------------------------------
@@ -22,12 +22,13 @@ def recommend_buffalo(budget, milk):
     else:
         return "Local Buffalo"
 
+
 # -------------------------------
 # Disease Decision Tree
 # -------------------------------
 def disease_decision(symptom):
-    s = symptom.lower()
-
+    s = symptom.lower().strip()
+        
     if "fever" in s:
         return (
             "🩺 <b>Fever in Cattle:</b><ul>"
@@ -48,7 +49,7 @@ def disease_decision(symptom):
             "</ul>"
         )
 
-    if "milk" in s or "udder" in s or "low milk" in s:
+    if "udder" in s or "low milk" in s:
         return (
             "🥛 <b>Mastitis / Low Milk:</b><ul>"
             "<li>Swollen udder</li>"
@@ -108,22 +109,140 @@ def fodder_recommendation(goal):
 # Chatbot Core
 # -------------------------------
 def dairy_chatbot(message, profile):
-    text = message.lower()
+    text = message.lower().strip()
     numbers = list(map(int, re.findall(r"\d+", text)))
 
-    budget = profile.get("budget")
-    milk = profile.get("milkHistory")
-    intent = profile.get("intent")
-
-        # ---- Milk Rate Variables ----
+    # -------------------------------
+    # Initialize profile keys if not present
+    # -------------------------------
+    profile.setdefault("budget", None)
+    profile.setdefault("milkHistory", None)
+    profile.setdefault("intent", None)
+    profile.setdefault("milk_records", [])
+    profile.setdefault("vaccinations", [])
+    profile.setdefault("add_milk_step", None)
+    profile.setdefault("vaccination_step", None)
+    profile.setdefault("current_vaccine", None)
     profile.setdefault("milk_rate_step", None)
     profile.setdefault("fat", None)
     profile.setdefault("fat_rate", None)
     profile.setdefault("snf", None)
     profile.setdefault("snf_rate", None)
+    profile.setdefault("awaiting_loan_detail", False)
 
+    # -------------------------------
+    # Step-based flows
+    # -------------------------------
+    
+    # ---- Add Milk ----
+    if text in ["add milk", "milk entry"]:
+        profile["add_milk_step"] = "quantity"
+        return "🥛 Please enter today's milk quantity (in liters)."
 
-    # ---- Reset option ----
+    elif profile.get("add_milk_step") == "quantity" and numbers:
+        val = numbers[0]
+        profile["milk_records"].append({
+            "date": str(date.today()),
+            "milk": val
+        })
+        profile["milkHistory"] = val
+        profile["add_milk_step"] = None
+        return f"✅ Milk entry saved: {val} L/day"
+
+    # ---- Vaccination ----
+    if text == "add vaccination":
+        profile["vaccination_step"] = "name"
+        return "💉 Please tell vaccination name (example: FMD, HS, BQ)"
+
+    elif profile.get("vaccination_step") == "name":
+        profile["current_vaccine"] = message.upper()
+        profile["vaccination_step"] = "date"
+        return "📅 Please tell vaccination date (YYYY-MM-DD)"
+
+    elif profile.get("vaccination_step") == "date":
+        profile["vaccinations"].append({
+            "vaccine": profile["current_vaccine"],
+            "date": message
+        })
+        profile["vaccination_step"] = None
+        profile.pop("current_vaccine", None)
+        return "✅ Vaccination saved"
+
+    # ---- Milk Rate Calculation ----
+    if "milk rate" in text or "milk price" in text:
+        profile["milk_rate_step"] = "fat"
+        return "🥛 Please tell FAT (%)"
+
+    elif profile.get("milk_rate_step") == "fat" and numbers:
+        profile["fat"] = numbers[0]
+        profile["milk_rate_step"] = "fat_rate"
+        return "💰 Please tell FAT rate"
+
+    elif profile.get("milk_rate_step") == "fat_rate" and numbers:
+        profile["fat_rate"] = numbers[0]
+        profile["milk_rate_step"] = "snf"
+        return "📊 Please tell SNF (%)"
+
+    elif profile.get("milk_rate_step") == "snf" and numbers:
+        profile["snf"] = numbers[0]
+        profile["milk_rate_step"] = "snf_rate"
+        return "💰 Please tell SNF rate"
+
+    elif profile.get("milk_rate_step") == "snf_rate" and numbers:
+        profile["snf_rate"] = numbers[0]
+        profile["milk_rate_step"] = "quantity"
+        return "📦 Please tell milk quantity (L)"
+
+    elif profile.get("milk_rate_step") == "quantity" and numbers:
+        quantity = numbers[0]
+        rate_per_liter = profile["fat"] * profile["fat_rate"] + profile["snf"] * profile["snf_rate"]
+        total_amount = rate_per_liter * quantity
+        profile["milk_rate_step"] = None
+        return (
+            f"🥛 <b>Milk Rate Calculation:</b><br>"
+            f"Rate per Liter: ₹{rate_per_liter:.2f}<br>"
+            f"Total Milk Value: ₹{total_amount:.2f}"
+        )
+
+    # -------------------------------
+    # Keyword-based flows
+    # -------------------------------
+
+    # ---- Milk Trend ----
+    if "milk trend" in text:
+        records = profile.get("milk_records", [])
+        if len(records) < 2:
+            return "⚠️ Not enough milk records to calculate trend. Please add daily milk."
+        if records[-1]["milk"] > records[0]["milk"]:
+            return "📈 Milk trend is increasing"
+        elif records[-1]["milk"] < records[0]["milk"]:
+            return "📉 Milk trend is decreasing"
+        else:
+            return "⚖️ Milk trend is stable"
+
+    # ---- Milk Chart ----
+    if "milk chart" in text:
+        records = profile.get("milk_records", [])
+        if not records:
+            return "⚠️ Not enough milk data to generate chart. Please add milk."
+        html = "<b>📊 Milk Chart:</b><ul>"
+        for r in records:
+            html += f"<li>{r['date']} — {r['milk']} L</li>"
+        html += "</ul>"
+        return html
+
+    # ---- Vaccination Chart ----
+    if "vaccination chart" in text:
+        records = profile.get("vaccinations", [])
+        if not records:
+            return "⚠️ No vaccination records found."
+        chart = "<b>💉 Vaccination History:</b><ul>"
+        for r in records:
+            chart += f"<li>{r['date']} — {r['vaccine']}</li>"
+        chart += "</ul>"
+        return chart
+
+    # ---- Reset ----
     if "reset" in text:
         profile["budget"] = None
         profile["milkHistory"] = None
@@ -131,7 +250,17 @@ def dairy_chatbot(message, profile):
         profile["awaiting_loan_detail"] = False
         return "✅ Budget and milk history reset. You can start again."
 
-    # ---- Loan Process / Documents ----
+    # ---- Loan ----
+    if "loan" in text:
+        profile["awaiting_loan_detail"] = True
+        return (
+            "💰 <b>Animal Loan Options:</b><ul>"
+            "<li>NABARD Dairy Loan</li>"
+            "<li>Cooperative Bank Loan</li>"
+            "<li>Kisan Credit Card (KCC)</li></ul>"
+            "💡 Would you like to know about the process and documents required for animal loan? Comment 'Yes'"
+        )
+
     if ("yes" in text or "loan process" in text or "loan documents" in text) and profile.get("awaiting_loan_detail"):
         profile["awaiting_loan_detail"] = False
         return (
@@ -145,81 +274,76 @@ def dairy_chatbot(message, profile):
             "💡 Banks usually process within 7–14 days after verification."
         )
 
-    # ---- Specific breed prices ----
-    if "hf price" in text:
-        return "🐄 Holstein Friesian Cow: ₹70000–110000 | 15–22 L/day"
-    if "murrah price" in text:
-        return "🐃 Murrah Buffalo: ₹90000–150000 | 15–20 L/day"
-    if "bhadawari price" in text:
-        return "🐃 Bhadawari Buffalo: ₹80000–120000 | 10–15 L/day"
-    if "sahiwal price" in text:
-        return "🐄 Sahiwal Cow: ₹40000–65000 | 10–15 L/day"
-    if "gir price" in text:
-        return "🐄 Gir Cow: ₹55000–85000 | 12–18 L/day"
+   # ---- Breed Price Queries (FIXED) ----
 
-    # ---- Buy cow / buffalo intent ----
+# Generic cow / buffalo price
+    if re.search(r"\bcow\s+price\b", text):
+        return (
+            "🐄 <b>Cow Prices:</b><ul>"
+            "<li>Sahiwal: ₹40000–65000 | 10–15 L/day</li>"
+            "<li>Gir: ₹55000–85000 | 12–18 L/day</li>"
+            "<li>HF: ₹70000–110000 | 15–22 L/day</li>"
+            "</ul>"
+        )
+    
+    if re.search(r"\bbuffalo\s+price\b", text):
+        return (
+            "🐃 <b>Buffalo Prices:</b><ul>"
+            "<li>Murrah: ₹90000–150000 | 15–20 L/day</li>"
+            "<li>Bhadawari: ₹80000–120000 | 10–15 L/day</li>"
+            "</ul>"
+        )
+    
+    # Specific breed price
+    breed_prices = {
+        "hf": "🐄 Holstein Friesian Cow: ₹70000–110000 | 15–22 L/day",
+        "gir": "🐄 Gir Cow: ₹55000–85000 | 12–18 L/day",
+        "sahiwal": "🐄 Sahiwal Cow: ₹40000–65000 | 10–15 L/day",
+        "murrah": "🐃 Murrah Buffalo: ₹90000–150000 | 15–20 L/day",
+        "bhadawari": "🐃 Bhadawari Buffalo: ₹80000–120000 | 10–15 L/day"
+    }
+    
+    for k, v in breed_prices.items():
+        if re.search(rf"\b{k}\b.*price|\bprice\b.*\b{k}\b", text):
+            return v
+
+
+    # ---- Buy cow / buffalo ----
     if "buy cow" in text or "suggest cow" in text:
         profile["intent"] = "cow"
-        if budget is None:
+        if profile["budget"] is None:
             return "❓ Please tell your budget for cow"
-        if milk is None:
+        if profile["milkHistory"] is None:
             return "❓ Please tell your milk range (L/day)"
-        breed = recommend_cow(budget, milk)
-        return (f"🐄 Based on ₹{budget} & {milk} L/day → <b>{breed}</b><br>"
-                "💡 Go with the same budget or type Reset for a new budget")
+        breed = recommend_cow(profile["budget"], profile["milkHistory"])
+        return f"🐄 Based on ₹{profile['budget']} & {profile['milkHistory']} L/day → <b>{breed}</b><br>💡 Go with the same budget or type Reset for a new budget"
 
     if "buy buffalo" in text or "suggest buffalo" in text:
         profile["intent"] = "buffalo"
-        if budget is None:
+        if profile["budget"] is None:
             return "❓ Please tell your budget for buffalo"
-        if milk is None:
+        if profile["milkHistory"] is None:
             return "❓ Please tell your milk range (L/day)"
-        breed = recommend_buffalo(budget, milk)
-        return (f"🐃 Based on ₹{budget} & {milk} L/day → <b>{breed}</b><br>"
-                "💡 Go with the same budget or type Reset for a new budget")
+        breed = recommend_buffalo(profile["budget"], profile["milkHistory"])
+        return f"🐃 Based on ₹{profile['budget']} & {profile['milkHistory']} L/day → <b>{breed}</b><br>💡 Go with the same budget or type Reset for a new budget"
 
     # ---- Budget input ----
-    if numbers and intent and budget is None:
+    if numbers and profile["intent"] and profile["budget"] is None:
         profile["budget"] = numbers[0]
         return f"✅ Budget saved: ₹{numbers[0]}<br>❓ Please tell your milk range (L/day)"
 
     # ---- Milk input ----
-    if numbers and intent and budget is not None and milk is None:
+    if numbers and profile["intent"] and profile["budget"] is not None and profile["milkHistory"] is None:
         profile["milkHistory"] = numbers[0]
-        if intent == "cow":
+        if profile["intent"] == "cow":
             breed = recommend_cow(profile["budget"], profile["milkHistory"])
-            return (
-                f"✅ Milk expectation saved: {profile['milkHistory']} L/day<br>"
-                f"🐄 Based on ₹{profile['budget']} & {profile['milkHistory']} L/day → <b>{breed}</b><br>"
-                "💡 Go with the same budget or type Reset for a new budget"
-            )
-        if intent == "buffalo":
-            breed = recommend_buffalo(profile["budget"], profile['milkHistory'])
-            return (
-                f"✅ Milk expectation saved: {profile['milkHistory']} L/day<br>"
-                f"🐃 Based on ₹{profile['budget']} & {profile['milkHistory']} L/day → <b>{breed}</b><br>"
-                "💡 Go with the same budget or type Reset for a new budget"
-            )
+            return f"✅ Milk expectation saved: {profile['milkHistory']} L/day<br>🐄 Based on ₹{profile['budget']} & {profile['milkHistory']} L/day → <b>{breed}</b><br>💡 Go with the same budget or type Reset for a new budget"
+        if profile["intent"] == "buffalo":
+            breed = recommend_buffalo(profile["budget"], profile["milkHistory"])
+            return f"✅ Milk expectation saved: {profile['milkHistory']} L/day<br>🐃 Based on ₹{profile['budget']} & {profile['milkHistory']} L/day → <b>{breed}</b><br>💡 Go with the same budget or type Reset for a new budget"
 
-
-
-        # ---- Cow / Buffalo List ----
-    if "cow list" in text:
-        return "🐄 Cow List:<ul><li>Sahiwal</li><li>Gir</li><li>HF</li></ul>"
-
-    if "buffalo list" in text:
-        return "🐃 Buffalo List:<ul><li>Murrah</li><li>Bhadawari</li></ul>"
-
-        
-    # ---- Cow / Buffalo Prices ----
-    if "cow price" in text: 
-        return "🐄 Cow Prices:<ul><li>Sahiwal: ₹40000–65000 | 10–15 L/day</li><li>Gir: ₹55000–85000 | 12–18 L/day</li><li>HF: ₹70000–110000 | 15–22 L/day</li></ul>"
-
-    if "buffalo price" in text:
-        return "🐃 Buffalo Prices:<ul><li>Murrah: ₹90000–150000 | 15–20 L/day</li><li>Bhadawari: ₹80000–120000 | 10–15 L/day</li></ul>"
-
-    # ---- Fodder ----
-    if "fodder" in text:
+ # ---- Fodder main ----
+    if re.search(r"\bfodder\b", text):
         return (
             "🥬 <b>Fodder Ratio:</b><ul>"
             "<li>Green 60%</li>"
@@ -230,77 +354,13 @@ def dairy_chatbot(message, profile):
             "💡 To increase milk type <b>milk raise</b><br>"
             "💡 To increase fat type <b>fat raise</b>"
         )
-
-    # ---- Fodder Goal Specific ----
+    
+    # ---- Fodder goal specific ----
     if re.search(r"\bmilk\s+raise\b", text):
         return fodder_recommendation("milk")
     
     if re.search(r"\bfat\s+raise\b", text):
         return fodder_recommendation("fat")
-
-
-    # ---- Shed ----
-    if "shed" in text:
-        return (
-            "🏠 <b>Shed Management:</b><ul>"
-            "<li>East–West direction</li>"
-            "<li>Dry floor</li>"
-            "<li>Good ventilation</li>"
-            "</ul>"
-        )
-
-    # ---- Loan ----
-    if "loan" in text:
-        profile["awaiting_loan_detail"] = True
-        return (
-            "💰 <b>Animal Loan Options:</b><ul>"
-            "<li>NABARD Dairy Loan</li>"
-            "<li>Cooperative Bank Loan</li>"
-            "<li>Kisan Credit Card (KCC)</li></ul>"
-            "💡 Would you like to know about the process and documents required for animal loan? Comment 'Yes'"
-        )
-
-    # ---- Milk Rate Calculation Flow ----
-    if "milk rate" in text or "milk price" in text:
-        profile["milk_rate_step"] = "fat"
-        return "🥛 Please tell FAT (%)"
-
-    if profile["milk_rate_step"] == "fat" and numbers:
-        profile["fat"] = numbers[0]
-        profile["milk_rate_step"] = "fat_rate"
-        return "💰 Please tell FAT rate"
-
-    if profile["milk_rate_step"] == "fat_rate" and numbers:
-        profile["fat_rate"] = numbers[0]
-        profile["milk_rate_step"] = "snf"
-        return "📊 Please tell SNF (%)"
-
-    if profile["milk_rate_step"] == "snf" and numbers:
-        profile["snf"] = numbers[0]
-        profile["milk_rate_step"] = "snf_rate"
-        return "💰 Please tell SNF rate"
-
-    if profile["milk_rate_step"] == "snf_rate" and numbers:
-        profile["snf_rate"] = numbers[0]
-        profile["milk_rate_step"] = "quantity"
-        return "📦 Please tell milk quantity (L)"
-
-    if profile["milk_rate_step"] == "quantity" and numbers:
-        quantity = numbers[0]
-
-        rate_per_liter = (
-            profile["fat"] * profile["fat_rate"]
-            + profile["snf"] * profile["snf_rate"]
-        )
-        total_amount = rate_per_liter * quantity
-
-        profile["milk_rate_step"] = None
-
-        return (
-            f"🥛 <b>Milk Rate Calculation:</b><br>"
-            f"Rate per Liter: ₹{rate_per_liter:.2f}<br>"
-            f"Total Milk Value: ₹{total_amount:.2f}"
-        )
 
     
     # ---- Disease ----
@@ -308,12 +368,26 @@ def dairy_chatbot(message, profile):
     if any(k in text for k in disease_keywords):
         return disease_decision(text)
 
-    # ---- Fallback Help ----
+    if re.search(r"\bshed\b", text):
+        return (
+            "🏠 <b>Shed Management:</b><ul>"
+            "<li>East–West orientation</li>"
+            "<li>Dry floor and regular cleaning</li>"
+            "<li>Good ventilation</li>"
+            "<li>Proper sunlight and drainage</li>"
+            "<li>Separate sick animal area</li>"
+            "</ul>"
+       )
+
+       
+    # ---- Fallback / Help ----
     return (
         "<b>I can help with:</b><ul>"
         "<li>Cow price / buffalo price</li>"
         "<li>Buy cow / buffalo suggestion</li>"
         "<li>Milk Rate Calculation</li>"
+        "<li>Add Milk and vaccination entry</li>"
+        "<li>Milk trend, chart and vaccination chart</li>"
         "<li>Fodder</li>"
         "<li>Disease symptoms</li>"
         "<li>Shed</li>"
@@ -322,6 +396,7 @@ def dairy_chatbot(message, profile):
         "❓What would you like to comment?"
         "</ul>"
     )
+
 
 # -------------------------------
 # Routes
@@ -359,7 +434,7 @@ button{background:#16a34a;color:white;border:none;border-radius:6px}
 <div class="container">
 <h2>🐄 Dairy Farm Guide Chatbot</h2>
 <div id="chat" class="chat">
-<div class="bot">Welcome! I am your dairy farm guide. I can help with prices, breed recommendation, fodder, milk, milk rate calculation, shed, disease symptoms, and loans. (Comment like: buy cow, buy buffalo, cow price, fodder, disease, shed, loan)</div>
+<div class="bot">Welcome! I am your dairy farm guide. I can help with prices, breed recommendation, fodder, milk, milk rate calculation, shed, disease symptoms, and loans. <br>(Comment like: buy cow, buy buffalo, cow price, fodder, disease, shed, loan)<br><br> <ul>You can also ask for:<ul/> <br> <li>add milk entry</li><br> <li>add vaccination</li><br> <li>milk trend</li><br> <li>milk chart</li><br> <li>vaccination chart</li></div>
 </div>
 <input id="msg" placeholder="Type here...">
 <button onclick="send()">Send</button>
