@@ -578,4 +578,4 @@ def home():
 
 if __name__ == "__main__":
     print("✅ Dairy Farm Guide Chatbot Running")
-    app.run(debug=True)
+    app.run(host="0.0.0.0", port=10000)
